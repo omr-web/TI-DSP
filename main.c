@@ -42,6 +42,8 @@ static void spia_init_internal_loopback(void)
     // 0x001F = SPISWRESET=0, CLKPOL=0, SPILBK=1, SPICHAR=15 (16-bit)
     SpiaRegs.SPICCR.all = 0x001F;
 
+    //loopback i kapadim.
+    SpiaRegs.SPICCR.bit.SPILBK = 0;
     // 0x0007 = SPIINTENA=1, TALK=1, MASTER=1, CLK_PHASE=0
     SpiaRegs.SPICTL.all = 0x0007;
 
@@ -77,22 +79,62 @@ static u16 spia_xfer16_loopback(u16 tx)
     return SpiaRegs.SPIRXBUF;
 }
 
+static void spia_gpio_init(void)
+{
+    EALLOW;
+
+    /* GPIO16 -> SPIA SIMO */
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO16 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO16  = 1;
+    GpioCtrlRegs.GPAPUD.bit.GPIO16   = 0;   // pull-up enable
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO16 = 3;   // async
+
+    /* GPIO17 -> SPIA SOMI */
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO17 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO17  = 1;
+    GpioCtrlRegs.GPAPUD.bit.GPIO17   = 0;   // pull-up enable
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO17 = 3;   // async
+
+    /* GPIO18 -> SPIA CLK */
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO18 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO18  = 1;
+    GpioCtrlRegs.GPAPUD.bit.GPIO18   = 0;   // pull-up enable
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO18 = 3;   // async
+
+    EDIS;
+}
+
+static void spi_cs_gpio34_init(void)
+{
+    EALLOW;
+
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO34 = 0;
+    GpioCtrlRegs.GPBMUX1.bit.GPIO34  = 0;
+    GpioCtrlRegs.GPBPUD.bit.GPIO34   = 0;
+    GpioCtrlRegs.GPBQSEL1.bit.GPIO34 = 3;
+    GpioCtrlRegs.GPBDIR.bit.GPIO34   = 1;
+
+    GpioDataRegs.GPBSET.bit.GPIO34   = 1;   // CS idle high
+
+    EDIS;
+}
+
+
 void main(void)
 {
     system_min_init();
+    spi_cs_gpio34_init();
+    spia_gpio_init();
     spia_init_internal_loopback();
 
     while(1)
     {
-        rx_data = spia_xfer16_loopback(tx_data);
+        SpiaRegs.SPITXBUF = 0xAA00;
 
-        // Beklenen: rx_data == tx_data
-        if(rx_data != tx_data)
+        while(SpiaRegs.SPISTS.bit.INT_FLAG == 0)
         {
-            asm(" ESTOP0");
         }
 
-        tx_data++;
         my_delay_loop(200000);
     }
 }
