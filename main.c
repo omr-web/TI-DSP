@@ -4,10 +4,26 @@ typedef unsigned char  u8;
 typedef unsigned short u16;
 typedef unsigned long  u32;
 
-volatile u16 tx_data = 0xA5A5;
-volatile u16 rx_data = 0x0000;
-volatile u16 spi_timeout = 0;
+/* =========================
+   CC1101 sabitleri
+   ========================= */
+#define CC1101_PKTLEN       0x06
+#define CC1101_SRES         0x30
 
+#define CC1101_READ_SINGLE  0x80
+#define CC1101_WRITE_BURST  0x40
+
+/* =========================
+   Debug değişkenleri
+   ========================= */
+volatile u8  test_wr = 0x12;
+volatile u8  test_rd = 0x00;
+volatile u16 test_ok = 0;
+volatile u16 ready_ok = 0;
+
+/* =========================
+   Delay
+   ========================= */
 static void my_delay_loop(volatile u32 count)
 {
     while(count--)
@@ -16,6 +32,9 @@ static void my_delay_loop(volatile u32 count)
     }
 }
 
+/* =========================
+   Minimum system init
+   ========================= */
 static void system_min_init(void)
 {
     EALLOW;
@@ -23,76 +42,257 @@ static void system_min_init(void)
     EDIS;
 }
 
-static void spia_init_internal_loopback(void)
+/* =========================
+   GPIO init
+   GPIO16 = MOSI (SI)
+   GPIO17 = MISO (SO/GDO1)
+   GPIO18 = SCLK
+   GPIO34 = CSN
+   ========================= */
+static void cc1101_gpio_init_swspi(void)
 {
     EALLOW;
 
-    // SPIA peripheral clock
-    // Header'ında isim SPIA ise onu kullan
-    CpuSysRegs.PCLKCR8.bit.SPI_A = 1;
+    /* GPIO16 -> output (MOSI) */
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO16 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO16  = 0;
+    GpioCtrlRegs.GPAPUD.bit.GPIO16   = 0;
+    GpioCtrlRegs.GPADIR.bit.GPIO16   = 1;
+    GpioDataRegs.GPACLEAR.bit.GPIO16 = 1;
+
+    /* GPIO17 -> input (MISO / SO / GDO1) */
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO17 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO17  = 0;
+    GpioCtrlRegs.GPAPUD.bit.GPIO17   = 0;
+    GpioCtrlRegs.GPADIR.bit.GPIO17   = 0;
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO17 = 3;
+
+    /* GPIO18 -> output (SCLK) */
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO18 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO18  = 0;
+    GpioCtrlRegs.GPAPUD.bit.GPIO18   = 0;
+    GpioCtrlRegs.GPADIR.bit.GPIO18   = 1;
+    GpioDataRegs.GPACLEAR.bit.GPIO18 = 1;
+
+    /* GPIO34 -> output (CSN) */
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO34 = 0;
+    GpioCtrlRegs.GPBMUX1.bit.GPIO34  = 0;
+    GpioCtrlRegs.GPBPUD.bit.GPIO34   = 0;
+    GpioCtrlRegs.GPBDIR.bit.GPIO34   = 1;
+    GpioDataRegs.GPBSET.bit.GPIO34   = 1;   // idle high
 
     EDIS;
-
-    // FIFO tamamen kapalı
-    SpiaRegs.SPIFFTX.bit.SPIFFENA    = 0;
-    SpiaRegs.SPIFFRX.bit.RXFIFORESET = 0;
-    SpiaRegs.SPIFFCT.all             = 0x0000;
-
-    // Reset altında konfigüre et
-    // 0x001F = SPISWRESET=0, CLKPOL=0, SPILBK=1, SPICHAR=15 (16-bit)
-    SpiaRegs.SPICCR.all = 0x001F;
-
-    // 0x0007 = SPIINTENA=1, TALK=1, MASTER=1, CLK_PHASE=0
-    SpiaRegs.SPICTL.all = 0x0007;
-
-    // Yavaş başla
-    SpiaRegs.SPIBRR.all = 0x0063;
-
-    // Debug'da durunca SPI bozulmasın
-    SpiaRegs.SPIPRI.bit.FREE = 1;
-
-    // Resetten çıkar
-    // 0x009F = SPISWRESET=1, CLKPOL=0, SPILBK=1, SPICHAR=15
-    SpiaRegs.SPICCR.all = 0x009F;
 }
 
-static u16 spia_xfer16_loopback(u16 tx)
+/* =========================
+   Pin yardımcıları
+   ========================= */
+static inline void cc_csn_low(void)
 {
-    volatile u32 timeout = 1000000UL;
+    GpioDataRegs.GPBCLEAR.bit.GPIO34 = 1;
+}
 
-    SpiaRegs.SPITXBUF = tx;
+static inline void cc_csn_high(void)
+{
+    GpioDataRegs.GPBSET.bit.GPIO34 = 1;
+}
 
-    while((SpiaRegs.SPISTS.bit.INT_FLAG != 1) && (timeout > 0))
+static inline void cc_sclk_low(void)
+{
+    GpioDataRegs.GPACLEAR.bit.GPIO18 = 1;
+}
+
+static inline void cc_sclk_high(void)
+{
+    GpioDataRegs.GPASET.bit.GPIO18 = 1;
+}
+
+static inline void cc_mosi_low(void)
+{
+    GpioDataRegs.GPACLEAR.bit.GPIO16 = 1;
+}
+
+static inline void cc_mosi_high(void)
+{
+    GpioDataRegs.GPASET.bit.GPIO16 = 1;
+}
+
+static inline u16 cc_miso_read(void)
+{
+    return GpioDataRegs.GPADAT.bit.GPIO17;
+}
+
+/* =========================
+   Kısa SPI yarım periyot gecikmesi
+   Çok hızlı olursa bunu büyüt
+   ========================= */
+static inline void spi_half_delay(void)
+{
+    my_delay_loop(20);
+}
+
+/* =========================
+   CC1101 ready bekle
+   SO/GDO1 low olmalı
+   ========================= */
+static u16 cc1101_wait_ready(void)
+{
+    volatile u32 timeout = 200000UL;
+
+    while((cc_miso_read() == 1U) && (timeout > 0U))
     {
         timeout--;
     }
 
-    if(timeout == 0)
+    if(timeout == 0U)
     {
-        spi_timeout = 1;
-        return 0xFFFF;
+        return 0;
     }
 
-    spi_timeout = 0;
-    return SpiaRegs.SPIRXBUF;
+    return 1;
 }
 
+/* =========================
+   Software SPI xfer (Mode 0 mantığı)
+   MOSI data -> rising edge'te örnekle
+   ========================= */
+static u8 swspi_xfer8(u8 tx)
+{
+    u8 rx = 0;
+    u16 i;
+
+    for(i = 0; i < 8; i++)
+    {
+        /* MSB first */
+        if(tx & 0x80)
+            cc_mosi_high();
+        else
+            cc_mosi_low();
+
+        spi_half_delay();
+
+        cc_sclk_high();
+        spi_half_delay();
+
+        rx <<= 1;
+        if(cc_miso_read())
+            rx |= 0x01;
+
+        cc_sclk_low();
+        spi_half_delay();
+
+        tx <<= 1;
+    }
+
+    return rx;
+}
+
+/* =========================
+   CC1101 reset
+   ========================= */
+static u16 cc1101_reset_sw(void)
+{
+    cc_csn_high();
+    cc_sclk_low();
+    cc_mosi_low();
+    my_delay_loop(50000);
+
+    cc_csn_low();
+    my_delay_loop(10000);
+    cc_csn_high();
+    my_delay_loop(50000);
+
+    cc_csn_low();
+
+    if(!cc1101_wait_ready())
+    {
+        cc_csn_high();
+        return 0;
+    }
+
+    swspi_xfer8(CC1101_SRES);
+
+    if(!cc1101_wait_ready())
+    {
+        cc_csn_high();
+        return 0;
+    }
+
+    cc_csn_high();
+    my_delay_loop(50000);
+
+    return 1;
+}
+
+/* =========================
+   Register write
+   ========================= */
+static u16 cc1101_write_reg_sw(u8 addr, u8 value)
+{
+    cc_csn_low();
+
+    if(!cc1101_wait_ready())
+    {
+        cc_csn_high();
+        return 0;
+    }
+
+    swspi_xfer8(addr);
+    swspi_xfer8(value);
+
+    cc_csn_high();
+    return 1;
+}
+
+/* =========================
+   Register read
+   ========================= */
+static u8 cc1101_read_reg_sw(u8 addr)
+{
+    u8 value;
+
+    cc_csn_low();
+
+    if(!cc1101_wait_ready())
+    {
+        cc_csn_high();
+        return 0xFF;
+    }
+
+    swspi_xfer8(addr | CC1101_READ_SINGLE);
+    value = swspi_xfer8(0x00);
+
+    cc_csn_high();
+
+    return value;
+}
+
+/* =========================
+   main
+   ========================= */
 void main(void)
 {
     system_min_init();
-    spia_init_internal_loopback();
+    cc1101_gpio_init_swspi();
+
+    ready_ok = cc1101_reset_sw();
+
+    if(ready_ok == 1)
+    {
+        cc1101_write_reg_sw(CC1101_PKTLEN, test_wr);
+        test_rd = cc1101_read_reg_sw(CC1101_PKTLEN);
+
+        if(test_rd == test_wr)
+            test_ok = 1;
+        else
+            test_ok = 0;
+    }
+    else
+    {
+        test_ok = 0;
+    }
 
     while(1)
     {
-        rx_data = spia_xfer16_loopback(tx_data);
-
-        // Beklenen: rx_data == tx_data
-        if(rx_data != tx_data)
-        {
-            asm(" ESTOP0");
-        }
-
-        tx_data++;
-        my_delay_loop(200000);
     }
 }
