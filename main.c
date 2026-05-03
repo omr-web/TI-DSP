@@ -12,6 +12,51 @@ typedef unsigned long  u32;
 #define CC1101_IOCFG2        0x00
 #define CC1101_SRES          0x30
 #define CC1101_READ_SINGLE   0x80
+#define CC1101_IOCFG0        0x02
+#define CC1101_FIFOTHR       0x03
+#define CC1101_SYNC1         0x04
+#define CC1101_SYNC0         0x05
+#define CC1101_PKTLEN        0x06
+#define CC1101_PKTCTRL1      0x07
+#define CC1101_PKTCTRL0      0x08
+#define CC1101_ADDR          0x09
+#define CC1101_CHANNR        0x0A
+#define CC1101_FSCTRL1       0x0B
+#define CC1101_FSCTRL0       0x0C
+#define CC1101_FREQ2         0x0D
+#define CC1101_FREQ1         0x0E
+#define CC1101_FREQ0         0x0F
+#define CC1101_MDMCFG4       0x10
+#define CC1101_MDMCFG3       0x11
+#define CC1101_MDMCFG2       0x12
+#define CC1101_MDMCFG1       0x13
+#define CC1101_MDMCFG0       0x14
+#define CC1101_DEVIATN       0x15
+#define CC1101_MCSM1         0x17
+#define CC1101_MCSM0         0x18
+#define CC1101_FOCCFG        0x19
+#define CC1101_BSCFG         0x1A
+#define CC1101_AGCCTRL2      0x1B
+#define CC1101_AGCCTRL1      0x1C
+#define CC1101_AGCCTRL0      0x1D
+#define CC1101_FREND1        0x21
+#define CC1101_FREND0        0x22
+#define CC1101_FSCAL3        0x23
+#define CC1101_FSCAL2        0x24
+#define CC1101_FSCAL1        0x25
+#define CC1101_FSCAL0        0x26
+#define CC1101_TEST2         0x2C
+#define CC1101_TEST1         0x2D
+#define CC1101_TEST0         0x2E
+#define CC1101_PATABLE       0x3E
+#define CC1101_TXFIFO        0x3F
+
+#define CC1101_WRITE_BURST   0x40
+#define CC1101_SFSTXON       0x31
+#define CC1101_SCAL          0x33
+#define CC1101_STX           0x35
+#define CC1101_SIDLE         0x36
+#define CC1101_SFTX          0x3B
 
 volatile u16 spi_timeout = 0;
 volatile u16 rst_ok = 0;
@@ -311,26 +356,154 @@ static u16 cc1101_read_reg_hw(u8 addr, volatile u8 *value)
 
     return 1;
 }
+
+static u16 cc1101_strobe_hw(u8 cmd)
+{
+    volatile u8 rx;
+
+    cc1101_csn_low();
+    my_delay_loop(2000);
+
+    if(!spia_xfer8(cmd, &rx))
+    {
+        cc1101_csn_high();
+        return 0;
+    }
+
+    my_delay_loop(2000);
+    cc1101_csn_high();
+    my_delay_loop(2000);
+
+    return 1;
+}
+
+static u16 cc1101_burst_write_hw(u8 addr, const u8 *data, u16 len)
+{
+    volatile u8 rx;
+    u16 i;
+
+    cc1101_csn_low();
+    my_delay_loop(2000);
+
+    if(!spia_xfer8(addr | CC1101_WRITE_BURST, &rx))
+    {
+        cc1101_csn_high();
+        return 0;
+    }
+
+    for(i = 0; i < len; i++)
+    {
+        if(!spia_xfer8(data[i], &rx))
+        {
+            cc1101_csn_high();
+            return 0;
+        }
+    }
+
+    my_delay_loop(2000);
+    cc1101_csn_high();
+    my_delay_loop(2000);
+
+    return 1;
+}
+
+static u16 cc1101_cw_init_433_hw(void)
+{
+    u8 pa_tbl[2] = {0x60, 0x60};   // maksimuma yakın; istersen 0x60 ile başla
+    u16 ok = 1;
+
+    /* 433.920 MHz */
+    ok &= cc1101_write_reg_hw(CC1101_FSCTRL1, 0x06);
+    ok &= cc1101_write_reg_hw(CC1101_FSCTRL0, 0x00);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ2, 0x10);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ1, 0xB0);
+    ok &=cc1101_write_reg_hw(CC1101_FREQ0, 0xC9);
+
+    /* CW / unmodulated ayarları */
+    ok &= cc1101_write_reg_hw(CC1101_PKTLEN,   0xFF);
+    ok &= cc1101_write_reg_hw(CC1101_PKTCTRL1, 0x04);
+    ok &= cc1101_write_reg_hw(CC1101_PKTCTRL0, 0x12);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG4,  0xF5);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG3,  0x83);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG2,  0x30);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG1,  0x22);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG0,  0xF8);
+    ok &= cc1101_write_reg_hw(CC1101_DEVIATN,  0x31);
+
+    ok &= cc1101_write_reg_hw(CC1101_MCSM1,    0x30);
+    ok &= cc1101_write_reg_hw(CC1101_MCSM0,    0x18);
+
+    ok &= cc1101_write_reg_hw(CC1101_FOCCFG,   0x16);
+    ok &= cc1101_write_reg_hw(CC1101_BSCFG,    0x6C);
+    ok &= cc1101_write_reg_hw(CC1101_AGCCTRL2, 0x03);
+    ok &= cc1101_write_reg_hw(CC1101_AGCCTRL1, 0x40);
+    ok &= cc1101_write_reg_hw(CC1101_AGCCTRL0, 0x91);
+
+    ok &= cc1101_write_reg_hw(CC1101_FREND1,   0x56);
+    ok &= cc1101_write_reg_hw(CC1101_FREND0,   0x11);
+
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL3,   0xE9);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL2,   0x2A);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL1,   0x00);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL0,   0x1F);
+
+    ok &= cc1101_write_reg_hw(CC1101_TEST2,    0x81);
+    ok &= cc1101_write_reg_hw(CC1101_TEST1,    0x35);
+    ok &= cc1101_write_reg_hw(CC1101_TEST0,    0x09);
+
+    /* PATABLE[0] ve [1] aynı */
+    ok &= cc1101_burst_write_hw(CC1101_PATABLE, pa_tbl, 2);
+
+    return ok;
+}
+
+static u16 cc1101_start_cw_hw(void)
+{
+    u8 dummy = 0xFF;
+    u16 ok = 1;
+
+    ok &= cc1101_strobe_hw(CC1101_SIDLE);
+    ok &= cc1101_strobe_hw(CC1101_SFTX);
+    ok &= cc1101_strobe_hw(CC1101_SCAL);
+
+    ok &= cc1101_burst_write_hw(CC1101_TXFIFO, &dummy, 1);
+    ok &= cc1101_strobe_hw(CC1101_STX);
+
+    return ok;
+}
+
+static u16 cc1101_stop_cw_hw(void)
+{
+    u16 ok = 1;
+    ok &= cc1101_strobe_hw(CC1101_SIDLE);
+    ok &= cc1101_strobe_hw(CC1101_SFTX);
+    return ok;
+}
+
+
+volatile u16 cfg_ok = 0;
+volatile u16 tx_ok  = 0;
+
 void main(void)
 {
     system_min_init();
     spi_cs_gpio34_init();
     spia_gpio_init();
-    spia_init();
+    spia_init();          // CLK_PHASE = 1 olan çalışan sürüm
 
     rst_ok = cc1101_reset_hw();
 
-    read_ok = cc1101_read_reg_hw(CC1101_IOCFG2, &reg0);
-
-    wr_ok = cc1101_write_reg_hw(CC1101_PKTLEN, test_wr);
-    rd_ok = cc1101_read_reg_hw(CC1101_PKTLEN, &test_rd);
-
-    if((reg0 == 0x29) && (wr_ok == 1) && (rd_ok == 1) && (test_rd == test_wr))
+    if(rst_ok)
     {
-        test_ok = 1;
+        cfg_ok = cc1101_cw_init_433_hw();
     }
-    else
+
+    if(cfg_ok)
     {
-        test_ok = 0;
+        tx_ok = cc1101_start_cw_hw();
+    }
+
+    while(1)
+    {
     }
 }
