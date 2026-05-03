@@ -86,7 +86,12 @@ static void my_delay_loop(volatile u32 count)
 static void system_min_init(void)
 {
     EALLOW;
-    WdRegs.WDCR.all = 0x0068;   // watchdog off
+
+    //WdRegs.WDCR.all = 0x0068;   // watchdog off
+
+    WdRegs.WDCR.bit.WDCHK = 5; // 101 watch enable/disable etmek icin yazilmali
+    WdRegs.WDCR.bit.WDDIS = 1; // watchdog disable
+
     EDIS;
 }
 
