@@ -1,5 +1,9 @@
 #include "f28x_project.h"
 
+
+#define CC1101_PKTLEN 0x06
+
+
 typedef unsigned char  u8;
 typedef unsigned short u16;
 typedef unsigned long  u32;
@@ -18,6 +22,13 @@ volatile u16 raw1 = 0;
 volatile u16 raw2 = 0;
 volatile u8  rx1_lo = 0, rx1_hi = 0;
 volatile u8  rx2_lo = 0, rx2_hi = 0;
+
+
+volatile u8 test_wr = 0x12;
+volatile u8 test_rd = 0x00;
+volatile u16 wr_ok = 0;
+volatile u16 rd_ok = 0;
+volatile u16 test_ok = 0;
 
 static void my_delay_loop(volatile u32 count)
 {
@@ -248,8 +259,31 @@ static u16 cc1101_read_reg_hw(u8 addr, u8 *value)
 
 */
 
+static u16 cc1101_write_reg_hw(u8 addr, u8 value)
+{
+    volatile u8 rx;
 
+    cc1101_csn_low();
+    my_delay_loop(2000);
 
+    if(!spia_xfer8(addr, &rx))
+    {
+        cc1101_csn_high();
+        return 0;
+    }
+
+    if(!spia_xfer8(value, &rx))
+    {
+        cc1101_csn_high();
+        return 0;
+    }
+
+    my_delay_loop(2000);
+    cc1101_csn_high();
+    my_delay_loop(2000);
+
+    return 1;
+}
 
 static u16 cc1101_read_reg_hw(u8 addr, volatile u8 *value)
 {
@@ -284,10 +318,19 @@ void main(void)
     spia_gpio_init();
     spia_init();
 
-    rst_ok  = cc1101_reset_hw();
-    read_ok = cc1101_read_reg_hw(CC1101_IOCFG2, (u8 *)&reg0);
+    rst_ok = cc1101_reset_hw();
 
-    while(1)
+    read_ok = cc1101_read_reg_hw(CC1101_IOCFG2, &reg0);
+
+    wr_ok = cc1101_write_reg_hw(CC1101_PKTLEN, test_wr);
+    rd_ok = cc1101_read_reg_hw(CC1101_PKTLEN, &test_rd);
+
+    if((reg0 == 0x29) && (wr_ok == 1) && (rd_ok == 1) && (test_rd == test_wr))
     {
+        test_ok = 1;
+    }
+    else
+    {
+        test_ok = 0;
     }
 }
