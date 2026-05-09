@@ -71,4 +71,7 @@ uint16_t cc1101_burst_write_hw(uint16_t addr, const uint16_t *data, uint16_t len
 uint16_t cc1101_strobe_hw(uint16_t cmd);
 uint16_t cc1101_read_reg_hw(uint16_t addr, volatile uint16_t *value);
 uint16_t cc1101_write_reg_hw(uint16_t addr, uint16_t value);
+
+uint16_t cc1101_packet_init_hw(void);
+uint16_t cc1101_send_packet_hw(const uint16_t *data, uint16_t len);
 #endif /* CC1101_DRIVER_CC1101_H_ */

@@ -11,6 +11,12 @@ volatile uint16_t tx_ok  = 0;
 volatile uint16_t rst_ok  = 0;
 
 
+static const uint16_t tx_payload[] =
+{
+    0x55, 0xAA, 0x55, 0xAA,
+    'T', 'I', '-', 'C', 'C', '1', '1', '0', '1'
+};
+
 void main(void)
 {
     system_min_init();
@@ -22,15 +28,16 @@ void main(void)
 
     if(rst_ok)
     {
-        cfg_ok = cc1101_cw_init_433_hw();
-    }
-
-    if(cfg_ok)
-    {
-        tx_ok = cc1101_start_cw_hw();
+        cfg_ok = cc1101_packet_init_hw();
     }
 
     while(1)
     {
+        if(cfg_ok)
+        {
+            tx_ok = cc1101_send_packet_hw(tx_payload, sizeof(tx_payload));
+        }
+
+        system_delay_loop(800000);
     }
 }

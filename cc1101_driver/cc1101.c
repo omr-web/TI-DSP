@@ -9,6 +9,14 @@
 #include "system.h"
 #include "f28x_project.h"
 
+static uint16_t cc1101_write_patable_hw(uint16_t pa);
+
+
+static uint16_t cc1101_write_patable_hw(uint16_t pa)
+{
+    return cc1101_burst_write_hw(CC1101_PATABLE, &pa, 1);
+}
+
 
 uint16_t cc1101_reset_hw(void)
 {
@@ -155,6 +163,74 @@ uint16_t cc1101_burst_write_hw(uint16_t addr, const uint16_t *data, uint16_t len
     system_delay_loop(2000);
 
     return 1;
+}
+
+uint16_t cc1101_send_packet_hw(const uint16_t *data, uint16_t len)
+{
+    uint16_t ok = 1;
+
+    if((len == 0) || (len > 64))
+        return 0;
+
+    ok &= cc1101_strobe_hw(CC1101_SIDLE);
+    ok &= cc1101_strobe_hw(CC1101_SFTX);
+
+    ok &= cc1101_write_reg_hw(CC1101_PKTLEN, len);
+    ok &= cc1101_burst_write_hw(CC1101_TXFIFO, data, len);
+    ok &= cc1101_strobe_hw(CC1101_STX);
+
+    return ok;
+}
+
+uint16_t cc1101_packet_init_hw(void)
+{
+    uint16_t ok = 1;
+
+    /* 433.920 MHz için sende ayarladığın düzeltmeli değer */
+    ok &= cc1101_write_reg_hw(CC1101_FSCTRL1, 0x06);
+    ok &= cc1101_write_reg_hw(CC1101_FSCTRL0, 0x00);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ2,   0x10);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ1,   0xB0);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ0,   0xC9);
+
+    /* GDO0 şimdilik kullanmıyorsan tristate bırak */
+    ok &= cc1101_write_reg_hw(CC1101_IOCFG0,  0x2E);
+
+    /* Fixed packet length, CRC kapalı */
+    ok &= cc1101_write_reg_hw(CC1101_PKTLEN,   0x10);
+    ok &= cc1101_write_reg_hw(CC1101_PKTCTRL1, 0x00);
+    ok &= cc1101_write_reg_hw(CC1101_PKTCTRL0, 0x00);
+
+    /* Modem ayarları: GFSK başlangıç ayarı */
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG4,  0xCA);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG3,  0x83);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG2,  0x13);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG1,  0x22);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG0,  0xF8);
+    ok &= cc1101_write_reg_hw(CC1101_DEVIATN,  0x35);
+
+    ok &= cc1101_write_reg_hw(CC1101_MCSM1,    0x00);  // TX sonrası IDLE
+    ok &= cc1101_write_reg_hw(CC1101_MCSM0,    0x18);  // autocal
+
+    ok &= cc1101_write_reg_hw(CC1101_FREND0,   0x10);
+
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL3,   0xE9);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL2,   0x2A);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL1,   0x00);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL0,   0x1F);
+
+    ok &= cc1101_write_reg_hw(CC1101_TEST2,    0x81);
+    ok &= cc1101_write_reg_hw(CC1101_TEST1,    0x35);
+    ok &= cc1101_write_reg_hw(CC1101_TEST0,    0x09);
+
+    /* Gücü şimdilik düşük-orta tut */
+    ok &= cc1101_write_patable_hw(0x60);
+
+    ok &= cc1101_strobe_hw(CC1101_SIDLE);
+    ok &= cc1101_strobe_hw(CC1101_SFTX);
+    ok &= cc1101_strobe_hw(CC1101_SCAL);
+
+    return ok;
 }
 
 uint16_t cc1101_cw_init_433_hw(void)
