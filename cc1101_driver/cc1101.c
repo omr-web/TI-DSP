@@ -306,7 +306,170 @@ uint16_t cc1101_stop_cw_hw(void)
     return ok;
 }
 
+void cc1101_gdo0_init(void)
+{
+    EALLOW;
 
+    GpioCtrlRegs.GPAGMUX2.bit.GPIO21 = 0;
+    GpioCtrlRegs.GPAMUX2.bit.GPIO21  = 0;
+    GpioCtrlRegs.GPAPUD.bit.GPIO21   = 0;
+    GpioCtrlRegs.GPADIR.bit.GPIO21   = 0;
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO21 = 3;   // async input
+
+    EDIS;
+}
+
+inline uint16_t cc1101_gdo0_read(void)
+{
+    return GpioDataRegs.GPADAT.bit.GPIO21;
+}
+
+
+uint16_t cc1101_packet_init_hw_crc_gdo0(void)
+{
+    uint16_t ok = 1;
+
+    /* 433.920 MHz - senin düzeltilmiş frekansın */
+    ok &= cc1101_write_reg_hw(CC1101_FSCTRL1, 0x06);
+    ok &= cc1101_write_reg_hw(CC1101_FSCTRL0, 0x00);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ2,   0x10);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ1,   0xB0);
+    ok &= cc1101_write_reg_hw(CC1101_FREQ0,   0xC9);
+
+    /* GDO0: sync gönderilince yükselir, packet bitince düşer */
+    ok &= cc1101_write_reg_hw(CC1101_IOCFG0,  0x06);
+
+    /* Fixed length + CRC enabled */
+    ok &= cc1101_write_reg_hw(CC1101_PKTLEN,   0x10);
+    ok &= cc1101_write_reg_hw(CC1101_PKTCTRL1, 0x00);
+    ok &= cc1101_write_reg_hw(CC1101_PKTCTRL0, 0x04);
+
+    /* GFSK başlangıç ayarları */
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG4,  0xCA);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG3,  0x83);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG2,  0x13);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG1,  0x22);
+    ok &= cc1101_write_reg_hw(CC1101_MDMCFG0,  0xF8);
+    ok &= cc1101_write_reg_hw(CC1101_DEVIATN,  0x35);
+
+    ok &= cc1101_write_reg_hw(CC1101_MCSM1,    0x00);   // TX sonrası IDLE
+    ok &= cc1101_write_reg_hw(CC1101_MCSM0,    0x18);   // autocal
+
+    ok &= cc1101_write_reg_hw(CC1101_FREND0,   0x10);
+
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL3,   0xE9);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL2,   0x2A);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL1,   0x00);
+    ok &= cc1101_write_reg_hw(CC1101_FSCAL0,   0x1F);
+
+    ok &= cc1101_write_reg_hw(CC1101_TEST2,    0x81);
+    ok &= cc1101_write_reg_hw(CC1101_TEST1,    0x35);
+    ok &= cc1101_write_reg_hw(CC1101_TEST0,    0x09);
+
+    /* Güç düşük-orta */
+    ok &= cc1101_write_patable_hw(0x60);
+
+    ok &= cc1101_strobe_hw(CC1101_SIDLE);
+    ok &= cc1101_strobe_hw(CC1101_SFTX);
+    ok &= cc1101_strobe_hw(CC1101_SCAL);
+
+    return ok;
+}
+
+
+volatile uint16_t gdo0_rise_ok = 0;
+volatile uint16_t gdo0_fall_ok = 0;
+
+uint16_t cc1101_send_packet_hw_gdo0(const uint16_t *data, uint16_t len)
+{
+    volatile uint16_t timeout;
+    uint16_t ok = 1;
+
+    if((len == 0) || (len > 64))
+        return 0;
+
+    ok &= cc1101_strobe_hw(CC1101_SIDLE);
+    ok &= cc1101_strobe_hw(CC1101_SFTX);
+
+    ok &= cc1101_write_reg_hw(CC1101_PKTLEN, len);
+    ok &= cc1101_burst_write_hw(CC1101_TXFIFO, data, len);
+    ok &= cc1101_strobe_hw(CC1101_STX);
+
+    if(!ok)
+        return 0;
+
+    /* GDO0 yükselmesini bekle */
+    timeout = 1000000UL;
+    while((cc1101_gdo0_read() == 0U) && (timeout > 0U))
+    {
+        timeout--;
+    }
+    gdo0_rise_ok = (timeout > 0U) ? 1 : 0;
+
+    if(timeout == 0U)
+    {
+        volatile uint16_t dbg_marcstate = 0;
+        volatile uint16_t dbg_txbytes   = 0;
+        volatile uint16_t dbg_timeout_stage = 0;
+
+        dbg_timeout_stage = 2;
+        cc1101_read_status_reg_hw(CC1101_MARCSTATE, &dbg_marcstate);
+        cc1101_read_status_reg_hw(CC1101_TXBYTES, &dbg_txbytes);
+
+        cc1101_strobe_hw(CC1101_SIDLE);
+
+        return 0;
+    }
+
+
+    /* GDO0 düşmesini bekle */
+    timeout = 2000000UL;
+    while((cc1101_gdo0_read() == 1U) && (timeout > 0U))
+    {
+        timeout--;
+    }
+    gdo0_fall_ok = (timeout > 0U) ? 1 : 0;
+
+    if(timeout == 0U)
+    {
+
+        return 0;
+    }
+
+    return 1;
+}
+
+
+
+
+uint16_t cc1101_read_status_reg_hw(uint16_t addr, volatile uint16_t *value)
+{
+    volatile uint16_t first_rx;
+    volatile uint16_t second_rx;
+
+    cc1101_csn_low();
+    system_delay_loop(2000);
+
+    if(!spia_xfer8(addr | CC1101_READ_BURST, &first_rx))
+    {
+        cc1101_csn_high();
+        return 0;
+    }
+
+    if(!spia_xfer8(0x00, &second_rx))
+    {
+        cc1101_csn_high();
+        return 0;
+    }
+
+    *value = second_rx;
+
+    system_delay_loop(2000);
+    cc1101_csn_high();
+    system_delay_loop(2000);
+
+    return 1;
+}
 
 
 /*

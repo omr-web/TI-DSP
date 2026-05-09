@@ -61,6 +61,11 @@
 #define CC1101_SIDLE         0x36
 #define CC1101_SFTX          0x3B
 
+
+#define CC1101_MARCSTATE     0x35
+#define CC1101_TXBYTES       0x3A
+#define CC1101_READ_BURST    0xC0
+
 inline void cc1101_csn_low(void);
 inline void cc1101_csn_high(void);
 uint16_t cc1101_reset_hw(void);
@@ -74,4 +79,11 @@ uint16_t cc1101_write_reg_hw(uint16_t addr, uint16_t value);
 
 uint16_t cc1101_packet_init_hw(void);
 uint16_t cc1101_send_packet_hw(const uint16_t *data, uint16_t len);
+
+void cc1101_gdo0_init(void);
+inline uint16_t cc1101_gdo0_read(void);
+uint16_t cc1101_send_packet_hw_gdo0(const uint16_t *data, uint16_t len);
+uint16_t cc1101_packet_init_hw_crc_gdo0(void);
+uint16_t cc1101_read_status_reg_hw(uint16_t addr, volatile uint16_t *value);
+
 #endif /* CC1101_DRIVER_CC1101_H_ */
